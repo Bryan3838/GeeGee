@@ -350,31 +350,27 @@ client.on('message', async message => {
         });
 
         if (!party_leader) return message.channel.send('You are not a party leader.');
-        if (players.length < 1) return message.channel.send('A minimum of 2 players is required to start the game.');
+        if (players.length < 2) return message.channel.send('A minimum of 2 players is required to start the game.');
         
         global_lobby_chat('Starting...', null, lobby);
         await players.forEach( async player => {
             await set_activity(player.discord_id, 'in_game', lobby);
         })
-        await create_game(lobby);
-        await delete_lobby(lobby);
 
         let game = lobby;
-        console.log(games.get(game))
-        games.get(game).players.forEach(player => {
-            console.log(player)
+        await create_game(game);
+        games.get(game).players[0].stats.turn = true;
+        await games.get(game).players.forEach( async game_player => {
+            await set_activity(game_player.discord_id, 'in_game', game);
+            game_player.stats.end_turn = true;
         })
-        let alive = [];
-        games.get(game).players.forEach(player => {
-            alive.push(player.stats.alive);
-        })
-        
+        await delete_lobby(game);
     } else if (command === 'test') {
         console.log(activity)
     }
 });
 
-setTimeout( () => {test();}, 500);
+//setTimeout( () => {test();}, 2000);
 async function test() {
     await lobbies.set('12345', {
         timestamp: Date.now(),
@@ -388,17 +384,11 @@ async function test() {
             discord_id: '519049511381893141',
             username: 'lolhi',
             party_leader: false
-        },
-        {
-            discord_id: '215229542443253761',
-            username: 'Best Mistake',
-            party_leader: false
         }],
         public: true
     })
     await set_activity('211384818137563137', 'in_game', '12345');
     await set_activity('519049511381893141', 'in_game', '12345');
-    await set_activity('215229542443253761', 'in_game', '12345')
     await create_game('12345');
     games.get('12345').players[0].stats.turn = true;
     await delete_lobby('12345');
@@ -533,9 +523,10 @@ client.setInterval( () => {
                                     }
 
                                     if (reaction === emojis[0]) {
-                                        let winner = await challenge(game_player_up, game_player, 'Duke', game);
+                                        let round = await challenge(game_player_up, game_player, 'Duke', game).winner;
+                                        await discard(round.loser.game, game);
 
-                                        if (winner.discord_id === game_player_up.discord_id) {
+                                        if (round.winner.game.discord_id === game_player_up.discord_id) {
                                             game_player_up.stats.coins+=2;
                                         }
                                     } else if (reaction === emojis[1]) {
@@ -596,15 +587,11 @@ client.setInterval( () => {
                                     if (!game_player.stats.turn) game_player.stats.end_turn = true;
                                 })
 
-                                let winner = await challenge(game_player, game_player_up,'Duke', game);
+                                let round = await challenge(game_player, game_player_up,'Duke', game);
+                                await discard(round.loser.game, game);
 
-                                if (winner.discord_id === game_player_up.discord_id) {
-                                    let embed = new RichEmbed()
-                                        .setAuthor(`Waiting for ${game_player_up.username} to switch cards...`, discord_player_up.avatarURL)
-                                        .setColor(config.color.discord_gray)
-                                    let messages = await global_game_chat({ embed }, game_player_up.discord_id, game);
-                                    await switch_roles(winner, 'Duke', game);
-                                    await delete_messages(messages);
+                                if (round.winner.game.discord_id === game_player_up.discord_id) {
+                                    await switch_roles(round.winner.game, 'Duke', game);
 
                                     game_player_up.stats.coins+=3;
                                 }
@@ -662,13 +649,10 @@ client.setInterval( () => {
                                     if (!game_player.stats.turn) game_player.stats.end_turn = true;
                                 })
 
-                                let winner = await challenge(game_player, game_player_up, 'Ambassador', game);
+                                let round = await challenge(game_player, game_player_up, 'Ambassador', game);
+                                await discard(round.loser.game, game);
 
-                                if (winner.discord_id === game_player_up.discord_id) {
-                                    let embed = new RichEmbed()
-                                        .setAuthor(`Waiting for ${game_player_up.username} to switch cards...`, discord_player_up.avatarURL)
-                                        .setColor(config.color.discord_gray)
-                                    messages = await global_game_chat({ embed }, game_player_up.discord_id, game);
+                                if (round.winner.game.discord_id === game_player_up.discord_id) {
                                     await switch_ambassador(game_player_up, game_player_up.stats.roles.length, game);
                                     await delete_messages(messages);
                                 }
@@ -685,10 +669,6 @@ client.setInterval( () => {
                                 })
                                 
                                 if (voted === players.length - 1) {
-                                    let embed = new RichEmbed()
-                                        .setAuthor(`Waiting for ${game_player_up.username} to switch cards...`, discord_player_up.avatarURL)
-                                        .setColor(config.color.discord_gray)
-                                    let messages = await global_game_chat({ embed }, game_player_up.discord_id, game);
                                     await switch_ambassador(game_player_up, game_player_up.stats.roles.length, game);
                                     await delete_messages(messages);
 
@@ -701,11 +681,101 @@ client.setInterval( () => {
                     }
                 })
             } else if (reaction === emojis[5]) {
+                let embed = new RichEmbed()
+                    .setAuthor(`${discord_player_up.username} is attempting to steal as CAPTAIN...`, discord_player_up.avatarURL)
+                    .setColor(config.color.gold)
+                await global_game_chat({ embed }, null, game);
+                let messages = [];
 
+                players.forEach( async game_player => {
+                    let discord_player = client.users.get(game_player.discord_id);
+                    if (!game_player.stats.turn) {
+                        let embed = new RichEmbed()
+                            .setAuthor('Would you like to challenge?')
+                            .setColor(config.color.discord_gray)
+                            .setDescription(`Your cards: ${player_roles(game_player)}\nYour coins: ${game_player.stats.coins}`)
+                        await discord_player.send({ embed }).then( async result_message => {
+                            messages.push(result_message);
+
+                            let emojis = ["👍", "👎"];
+
+                            let reaction = await await_reaction(result_message, discord_player.id, emojis, 300000);
+
+                            if (!reaction) {
+                                
+                            }
+
+                            if (reaction === emojis[0]) {
+
+                            } else if (reaction === emojis[1]) {
+                                game_player.stats.end_turn = true;
+                                result_message.delete();
+                                let voted = 0;
+                                players.forEach( game_player => {
+                                    if (game_player.stats.end_turn) voted++;
+                                })
+                                
+                                if (voted === players.length - 1) {
+                                    //steal
+
+                                    game_player_up.stats.end_turn = true;
+                                    game_player_up.stats.turn = false;
+                                    game.turns++;
+                                }
+                            }
+                        })
+                    }
+                })
             } else if (reaction === emojis[6]) {
-
+                
             } else if (reaction === emojis[7]) {
+                let embed = new RichEmbed()
+                    .setAuthor(`${discord_player_up.username} is going to coup...`, discord_player_up.avatarURL)
+                    .setColor(config.color.gold)
+                await global_game_chat({ embed }, null, game);
+                let messages = [];
 
+                let text = '';
+                let i = 0;
+                players.forEach( async player => {
+                    if (player.discord_id !== game_player_up.discord_id) {
+                        i++;
+                        text += `${number[i - 1]}${player.username}`
+                    }
+                })
+
+                embed = new RichEmbed()
+                    .setAuthor('Who would you like to coup?', discord_player_up.avatarURL)
+                    .setDescription(text)
+                await discord_player_up.send({ embed }).then( async result_message => {
+                    let emojis = [];
+                    for (let i = 0; i < players.length - 1; i++) {
+                        emojis.push(numbers[i + 1]);
+                    }
+
+                    let reaction = await await_reaction(result_message, discord_player_up.id, emojis, 300000);
+
+                    if (!reaction) {
+
+                    }
+
+                    let index = null;
+                    if (reaction === emojis[0]) {
+                        index = 0;
+                    } else if (reaction === emojis[1]) {
+                        index = 1;
+                    } else if (reaction === emojis[2]) {
+                        index = 2;
+                    } else if (reaction === emojis[3]) {
+                        index = 3;
+                    } else if (reaction === emojis[4]) {
+                        index = 4;
+                    } else if (reaction === emojis[5]) {
+                        index = 5;
+                    }
+
+                    players[index];
+                })
             }
 
             result_message.delete();
@@ -751,25 +821,35 @@ async function challenge(game_challenger, game_opponent, role, game) {
     }
 
     await global_game_chat(`${loser.discord.username} loses the challenge!`, null, game);
-    let roles = loser.game.stats.roles;
+
+    let round = {
+        winner: winner,
+        loser: loser
+    }
+    return round
+}
+
+async function discard(game_player, game) {
+    let roles = game_player.stats.roles;
 
     if (roles.length === 1) {
         return //lose game
     }
 
+    let discord_player = await client.users.get(game_player.discord_id);
     let embed = new RichEmbed()
-        .setAuthor(`Waiting for ${loser.game.username} to discard a card...`, loser.discord.avatarURL)
+        .setAuthor(`Waiting for ${game_player.username} to discard a card...`, discord_player.avatarURL)
         .setColor(config.color.discord_gray)
-    let messages = await global_game_chat({ embed }, loser.game.discord_id, game);
+    let messages = await global_game_chat({ embed }, game_player.discord_id, game);
 
     embed = new RichEmbed()
         .setAuthor('Choose a card to discard.')
         .setColor(config.color.gold)
         .setDescription(`${numbers[1]}${roles[0]}\n${numbers[2]}${roles[1]}`)
-    await loser.discord.send({ embed }).then( async result_message => {
+    await discord_player.send({ embed }).then( async result_message => {
         let emojis = [numbers[1], numbers[2]];
 
-        let reaction = await await_reaction(result_message, loser.game.discord_id, emojis, 300000);
+        let reaction = await await_reaction(result_message, game_player.discord_id, emojis, 300000);
 
         if (!reaction) {
 
@@ -794,12 +874,16 @@ async function challenge(game_challenger, game_opponent, role, game) {
                 break;
             } 
         }
-        await global_game_chat(`${loser.discord.username} has discarded the ${discard} card.`, null, game);
+        await global_game_chat(`${game_player.username} has discarded the ${discard} card.`, null, game);
     });
-    return winner.game;
 }
 
 async function switch_ambassador(game_player, amount, game) {
+    let embed = new RichEmbed()
+        .setAuthor(`Waiting for ${game_player_up.username} to switch cards...`, discord_player_up.avatarURL)
+        .setColor(config.color.discord_gray)
+    let messages = await global_game_chat({ embed }, game_player_up.discord_id, game);
+
     let roles = [];
 
     await game_player.stats.roles.forEach( async role => {
@@ -853,24 +937,29 @@ async function switch_ambassador(game_player, amount, game) {
             roles.splice(index, 1);
         })
     }
+    await delete_messages(messages);
 }
 
 async function switch_roles(game_player, discard, game) {
+    let discord_player = client.users.get(game_player.discord_id);
+    let embed = new RichEmbed()
+        .setAuthor(`Waiting for ${game_player.username} to switch cards...`, discord_player.avatarURL)
+        .setColor(config.color.discord_gray)
+    let messages = await global_game_chat({ embed }, game_player.discord_id, game);
+
     let roles = [];
 
     game_player.stats.roles.splice(game_player.stats.roles.indexOf(discard), 1);
-
     let pick = await pick_roles(game.role_pool);
     await pick.forEach( async role => {
         await roles.push(role);
     })
 
-    let discord_player = client.users.get(game_player.discord_id);
     let text = '';
     for (let i = 0; i < roles.length; i++) {
         text += `${numbers[i + 1]}${roles[i]}\n`
     }
-    let embed = new RichEmbed()
+    embed = new RichEmbed()
         .setAuthor(`Select 1 card to switch.`)
         .setColor(config.color.discord_gray)
         .setDescription(text)
@@ -902,6 +991,7 @@ async function switch_roles(game_player, discard, game) {
         game_player.stats.roles.push(roles[index]);
         roles.splice(index, 1);
     })
+    await delete_messages(messages);
 }
 
 function set_activity(discord_id, status, lobby) {
