@@ -1,6 +1,6 @@
 const Discord = { RichEmbed } = require('discord.js');
 const client = new Discord.Client();
-const config = require('../settings/config.json');
+const config = require('./settings/config.json');
 
 const Filter = require('bad-words'),
 filter = new Filter({ placeHolder: 'x'});
@@ -223,13 +223,13 @@ client.on('message', async message => {
                         return message.channel.send('Closed menu.').then( result_message => { delete_message(result_message, 5000) });
                     }
                 })
-            } else if (reaction === numbers[2]) {
+            } else if (reaction === emojis[1]) {
                 let embed = new RichEmbed()
                     .setTitle('Create Lobby')
                     .setColor(config.color.discord_gray)
                     .setDescription('Would you like to create a public or private lobby?\n1⃣  Public\n2⃣ Private')
                 message.channel.send({ embed }).then( async result_message => {
-                    let emojis = [numbers[1], numbers[2],, "❌"];
+                    let emojis = [numbers[1], numbers[2], "❌"];
                     let reaction = await await_reaction(result_message, message.author.id, emojis, 60000);
 
                     result_message.delete();
@@ -240,7 +240,7 @@ client.on('message', async message => {
                     }
 
                     let public = true;
-                    if (reaction === emojis[2]) {
+                    if (reaction === emojis[1]) {
                         public = false;
                     } else if (reaction === "❌") {
                         await set_activity(message.author.id, null, null);
@@ -262,18 +262,19 @@ client.on('message', async message => {
                             .setColor(config.color.discord_gray)
                             .setDescription(`To invite friends, share this lobby ID: \`${lobby}\``)
                             .setTimestamp()
-                        result_message.edit({ embed }).then( result_message => delete_message(result_message, 15000));
+                        await result_message.edit({ embed }).then( result_message => delete_message(result_message, 15000));
 
                         embed = new RichEmbed()
                             .setAuthor(`${message.author.username} has joined the lobby.`, message.author.avatarURL)
                             .setColor(config.color.lime)
-                        global_lobby_chat({ embed }, null, lobby);
+                        await global_lobby_chat({ embed }, null, lobby);
 
                         let players = lobbies.get(lobby).players;
                         let block = '';
                         for (let player of players) {
                             block += `+${player.username} ${player.party_leader ? '(Party Leader)' : ''}\n`;
                         }
+                        
                         embed = new RichEmbed()
                             .setAuthor('Players')
                             .setColor(config.color.discord_gray)
@@ -384,18 +385,22 @@ async function test() {
             discord_id: '519049511381893141',
             username: 'lolhi',
             party_leader: false
+        },
+        {
+            discord_id: '215229542443253761',
+            username: 'Best Mistake',
+            party_leader: false
         }],
         public: true
     })
-    await set_activity('211384818137563137', 'in_game', '12345');
-    await set_activity('519049511381893141', 'in_game', '12345');
+
     await create_game('12345');
     games.get('12345').players[0].stats.turn = true;
-    await delete_lobby('12345');
-
     await games.get('12345').players.forEach( async game_player => {
         game_player.stats.end_turn = true;
+        await set_activity(game_player.discord_id, 'in_game', '12345')
     })
+    await delete_lobby('12345');
 
     games.forEach(game => {
         console.log(game)
@@ -607,6 +612,7 @@ client.setInterval( () => {
                                     if (!game_player.stats.end_turn) voted++;
                                 })
                                 
+                                // FXIXIIFIXOFILXFIOXFIOXIFLXILFIXLFILXFILXFOXLFILXFILXFI LOL FIX THIS
                                 if (voted === players.length - 1) {
                                     game_player_up.stats.coins+=3;
                                     game_player_up.stats.end_turn = true;
@@ -737,10 +743,11 @@ client.setInterval( () => {
 
                 let text = '';
                 let i = 0;
+
                 players.forEach( async player => {
                     if (player.discord_id !== game_player_up.discord_id) {
+                        text += `${numbers[i + 1]}${player.username}\n`
                         i++;
-                        text += `${number[i - 1]}${player.username}`
                     }
                 })
 
@@ -770,11 +777,10 @@ client.setInterval( () => {
                         index = 3;
                     } else if (reaction === emojis[4]) {
                         index = 4;
-                    } else if (reaction === emojis[5]) {
-                        index = 5;
                     }
 
-                    players[index];
+                    await global_game_chat(`${game_player_up.username} has coup'd ${players[index + 1 % players.length].username}!`, null, game);
+                    await discard(players[index + 1 % players.length], game);
                 })
             }
 
@@ -1046,7 +1052,7 @@ function initialize_player(game, player) {
         party_leader: player.party_leader,
         stats: {
             roles: pick_roles(games.get(game).role_pool),
-            coins: 2,
+            coins: 7,
             turn: false,
             end_turn: false
         }
